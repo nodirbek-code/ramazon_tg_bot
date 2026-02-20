@@ -11,6 +11,9 @@ from telegram.ext import (
 import sqlite3
 from datetime import datetime, date, timedelta, time
 import json
+from zoneinfo import ZoneInfo  # Python 3.9+
+
+TASHKENT_TZ = ZoneInfo("Asia/Tashkent")
 import asyncio
 from aiohttp import web
 import hmac
@@ -373,7 +376,6 @@ class Database:
         ''', (user_id, username, first_name, message))
         conn.commit()
         conn.close()
-    
 
     # ================== TASK METODLARI ==================
 
@@ -892,7 +894,7 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 {message}
 
-_Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
+_Vaqt: {datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M:%S')}_
 """
             await context.bot.send_message(ADMIN_ID, admin_text, parse_mode='Markdown')
         except:
@@ -944,7 +946,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
 💬 *Xabar:*
 {message}
 
-_Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
+_Vaqt: {datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M:%S')}_
 """
             await context.bot.send_message(
                 ADMIN_ID, admin_text,
@@ -1095,7 +1097,6 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.error(f"Web app data error: {e}")
 
 
-
 # ================== REST API SERVER (Web App uchun) ==================
 
 def verify_telegram_user(init_data: str, bot_token: str):
@@ -1123,7 +1124,7 @@ async def api_get_state(request: web.Request) -> web.Response:
         # user_id olish
         user_id_str = request.rel_url.query.get('user_id', '')
         init_data = request.rel_url.query.get('init_data', '')
-        
+
         user_id = None
         if init_data:
             user_id = verify_telegram_user(init_data, BOT_TOKEN)
@@ -1132,7 +1133,7 @@ async def api_get_state(request: web.Request) -> web.Response:
         # demo_ prefiksli ID lar uchun (brauzerda test qilish)
         if not user_id and user_id_str.startswith('demo_'):
             user_id = user_id_str  # string sifatida saqlaymiz
-        
+
         if not user_id:
             return web.json_response({'ok': False, 'error': 'Unauthorized'}, status=401, headers=headers)
 
@@ -1207,7 +1208,7 @@ async def api_save_state(request: web.Request) -> web.Response:
         ramadan_day = get_ramadan_day()
         if ramadan_day <= 0:
             ramadan_day = 1
-        
+
         day = int(body.get('day', ramadan_day))
         data_type = body.get('type', '')
 
@@ -1495,7 +1496,7 @@ async def send_scheduled_messages(application):
     """Har daqiqa scheduled xabarlarni tekshiradi va yuboradi"""
     while True:
         try:
-            current_time = datetime.now().strftime("%H:%M")
+            current_time = datetime.now(TASHKENT_TZ).strftime("%H:%M")  # ✅ Toshkent vaqti
             scheduled = application.bot_data.get('scheduled_messages', [])
             today = str(date.today())
 
@@ -1523,7 +1524,7 @@ async def send_scheduled_messages(application):
 async def send_time_notifications(application):
     while True:
         try:
-            now = datetime.now()
+            now = datetime.now(TASHKENT_TZ)  # ✅ Toshkent vaqti (UTC+5)
             current_time = now.strftime("%H:%M")
             ramadan_day = get_ramadan_day()
 
@@ -1618,7 +1619,7 @@ def main():
     import os
     application = Application.builder().token(BOT_TOKEN).build()
 
-    if not ADMIN_ID :
+    if not ADMIN_ID:
         logger.warning("⚠️ Admin ID'ni kiriting!")
 
     async def admin_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
