@@ -1256,13 +1256,10 @@ async def api_options(request: web.Request) -> web.Response:
 
 
 async def start_api_server():
-    """
-    Railway da: Telegram webhook + REST API bitta portda ishlaydi.
-    Local da: faqat REST API alohida portda ishlaydi.
-    """
+    """REST API server — polling bilan parallel ishlaydi"""
     import os
-    webhook_url = os.environ.get('WEBHOOK_URL', '')
-    port = int(os.environ.get('PORT', 8080))
+    # Railway da PORT bor, local da 8080
+    port = int(os.environ.get('PORT', os.environ.get('API_PORT', 8080)))
 
     app = web.Application()
     app.router.add_get('/api/state', api_get_state)
@@ -1778,12 +1775,6 @@ def main():
     # Matn handleri — oxirida
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # REST API serverni ishga tushirish
-    application.job_queue.run_once(
-        lambda context: asyncio.create_task(start_api_server()),
-        when=0
-    )
-
     # Vaqt eslatmalari + Scheduled xabarlar
     application.job_queue.run_once(
         lambda context: asyncio.create_task(send_time_notifications(application)),
@@ -1799,24 +1790,56 @@ def main():
     logger.info(f"📅 Ramazon kuni: {ramadan_day}")
     logger.info(f"📆 Boshlanish: {RAMADAN_START_DATE}")
 
-    # Railway da PORT env variable bor — webhook ishlatamiz
-    port = int(os.environ.get('PORT', 8080))
-    webhook_url = os.environ.get('WEBHOOK_URL', '')
+    async def run_all():
+        import os
+        port = int(os.environ.get('PORT', os.environ.get('API_PORT', 8080)))
 
-    if webhook_url:
-        # Railway: webhook + aiohttp API birga
-        logger.info(f"🌐 Webhook mode: {webhook_url}, port={port}")
-        application.run_webhook(
-            listen='0.0.0.0',
-            port=port,
-            webhook_url=f"{webhook_url}/telegram",
-            url_path='telegram',
-            allowed_updates=Update.ALL_TYPES
-        )
-    else:
-        # Local: polling mode
-        logger.info("🔄 Polling mode (local)")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        # aiohttp REST API server
+        app = web.Application()
+        app.router.add_get('/api/state', api_get_state)
+        app.router.add_post('/api/save', api_save_state)
+        app.router.add_route('OPTIONS', '/api/state', api_options)
+        app.router.add_route('OPTIONS', '/api/save', api_options)
+        app.router.add_get('/health', lambda r: web.json_response({'ok': True, 'status': 'running'}))
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        logger.info(f"✅ REST API server port {port} da ishga tushdi")
+
+        # Telegram bot polling
+        await application.initialize()
+        await application.start()
+        await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        logger.info("✅ Telegram bot polling boshlandi")
+
+        # Job queue
+        application.job_queue.start()
+
+        # Doim ishlaydi
+        import signal
+        stop_event = asyncio.Event()
+
+        def handle_signal():
+            stop_event.set()
+
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, handle_signal)
+            except Exception:
+                pass
+
+        await stop_event.wait()
+
+        # To'xtatish
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+        await runner.cleanup()
+
+    asyncio.run(run_all())
 
 
 if __name__ == '__main__':
