@@ -1256,7 +1256,14 @@ async def api_options(request: web.Request) -> web.Response:
 
 
 async def start_api_server():
-    """aiohttp REST API serverni ishga tushiradi"""
+    """
+    Railway da: Telegram webhook + REST API bitta portda ishlaydi.
+    Local da: faqat REST API alohida portda ishlaydi.
+    """
+    import os
+    webhook_url = os.environ.get('WEBHOOK_URL', '')
+    port = int(os.environ.get('PORT', 8080))
+
     app = web.Application()
     app.router.add_get('/api/state', api_get_state)
     app.router.add_post('/api/save', api_save_state)
@@ -1266,9 +1273,6 @@ async def start_api_server():
 
     runner = web.AppRunner(app)
     await runner.setup()
-    # Railway PORT env o'zgaruvchisidan portni olish
-    import os
-    port = int(os.environ.get('API_PORT', 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     logger.info(f"✅ REST API server started on port {port}")
@@ -1609,6 +1613,7 @@ _Tutgan ro'zangiz qabul bo'lsin!_ 🤲
 
 # ================== MAIN ==================
 def main():
+    import os
     application = Application.builder().token(BOT_TOKEN).build()
 
     if not ADMIN_ID :
@@ -1794,7 +1799,24 @@ def main():
     logger.info(f"📅 Ramazon kuni: {ramadan_day}")
     logger.info(f"📆 Boshlanish: {RAMADAN_START_DATE}")
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Railway da PORT env variable bor — webhook ishlatamiz
+    port = int(os.environ.get('PORT', 8080))
+    webhook_url = os.environ.get('WEBHOOK_URL', '')
+
+    if webhook_url:
+        # Railway: webhook + aiohttp API birga
+        logger.info(f"🌐 Webhook mode: {webhook_url}, port={port}")
+        application.run_webhook(
+            listen='0.0.0.0',
+            port=port,
+            webhook_url=f"{webhook_url}/telegram",
+            url_path='telegram',
+            allowed_updates=Update.ALL_TYPES
+        )
+    else:
+        # Local: polling mode
+        logger.info("🔄 Polling mode (local)")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == '__main__':
