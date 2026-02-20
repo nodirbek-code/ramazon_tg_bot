@@ -1129,6 +1129,9 @@ async def api_get_state(request: web.Request) -> web.Response:
             user_id = verify_telegram_user(init_data, BOT_TOKEN)
         if not user_id and user_id_str.lstrip('-').isdigit():
             user_id = int(user_id_str)
+        # demo_ prefiksli ID lar uchun (brauzerda test qilish)
+        if not user_id and user_id_str.startswith('demo_'):
+            user_id = user_id_str  # string sifatida saqlaymiz
         
         if not user_id:
             return web.json_response({'ok': False, 'error': 'Unauthorized'}, status=401, headers=headers)
@@ -1195,6 +1198,8 @@ async def api_save_state(request: web.Request) -> web.Response:
             user_id = verify_telegram_user(init_data, BOT_TOKEN)
         if not user_id and user_id_str.lstrip('-').isdigit():
             user_id = int(user_id_str)
+        if not user_id and user_id_str.startswith('demo_'):
+            user_id = user_id_str
 
         if not user_id:
             return web.json_response({'ok': False, 'error': 'Unauthorized'}, status=401, headers=headers)
