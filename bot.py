@@ -11,9 +11,6 @@ from telegram.ext import (
 import sqlite3
 from datetime import datetime, date, timedelta, time
 import json
-from zoneinfo import ZoneInfo  # Python 3.9+ da o'rnatilgan
-
-TASHKENT_TZ = ZoneInfo("Asia/Tashkent")  # UTC+5
 import asyncio
 from aiohttp import web
 import hmac
@@ -303,6 +300,19 @@ class Database:
             )
         ''')
 
+        # Foydalanuvchi harakatlari logi — qachon nima qilgani
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_activity_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                first_name TEXT,
+                username TEXT,
+                action TEXT,
+                detail TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         conn.commit()
         conn.close()
         logger.info("✅ Database initialized")
@@ -339,8 +349,8 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO user_messages (user_id, username, first_name, message, message_type)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO user_messages (user_id, username, first_name, message, message_type, created_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now', '+5 hours'))
         ''', (user_id, username, first_name, message, message_type))
         conn.commit()
         conn.close()
@@ -349,8 +359,8 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO admin_requests (user_id, username, first_name, message)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO admin_requests (user_id, username, first_name, message, created_at)
+            VALUES (?, ?, ?, ?, datetime('now', '+5 hours'))
         ''', (user_id, username, first_name, message))
         conn.commit()
         conn.close()
@@ -371,11 +381,12 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO feedback (user_id, username, first_name, message)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO feedback (user_id, username, first_name, message, created_at)
+            VALUES (?, ?, ?, ?, datetime('now', '+5 hours'))
         ''', (user_id, username, first_name, message))
         conn.commit()
         conn.close()
+    
 
     # ================== TASK METODLARI ==================
 
@@ -385,12 +396,12 @@ class Database:
         cursor = conn.cursor()
         try:
             if completed:
-                    cursor.execute('''
-                        INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
-                        VALUES (?, ?, ?, 1, datetime('now', '+5 hours'))
-                        ON CONFLICT(user_id, day_number, task_id)
-                        DO UPDATE SET completed = 1, completed_at = datetime('now', '+5 hours')
-                    ''', (user_id, day_number, task_id))
+                cursor.execute('''
+                    INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
+                    VALUES (?, ?, ?, 1, datetime('now', '+5 hours'))
+                    ON CONFLICT(user_id, day_number, task_id)
+                    DO UPDATE SET completed = 1, completed_at = datetime('now', '+5 hours')
+                ''', (user_id, day_number, task_id))
             else:
                 cursor.execute('''
                     INSERT INTO daily_tasks (user_id, day_number, task_id, completed)
@@ -438,9 +449,9 @@ class Database:
                 if completed:
                     cursor.execute('''
                         INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
-                        VALUES (?, ?, ?, datetime('now', '+5 hours'))
-                        ON CONFLICT(user_id, day_number)
-                        DO UPDATE SET progress_percentage = ?, updated_at = datetime('now', '+5 hours')
+                        VALUES (?, ?, ?, 1, datetime('now', '+5 hours'))
+                        ON CONFLICT(user_id, day_number, task_id)
+                        DO UPDATE SET completed = 1, completed_at = datetime('now', '+5 hours')
                     ''', (user_id, day_number, task_id))
                 else:
                     cursor.execute('''
@@ -464,9 +475,9 @@ class Database:
         try:
             cursor.execute('''
                 INSERT INTO daily_progress (user_id, day_number, progress_percentage, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, datetime('now', '+5 hours'))
                 ON CONFLICT(user_id, day_number)
-                DO UPDATE SET progress_percentage = ?, updated_at = CURRENT_TIMESTAMP
+                DO UPDATE SET progress_percentage = ?, updated_at = datetime('now', '+5 hours')
             ''', (user_id, day_number, progress, progress))
             conn.commit()
             return True
@@ -572,23 +583,15 @@ class Database:
         conn.close()
         return count
 
-
     def log_activity(self, user_id: int, first_name: str, username: str, action: str, detail: str = ""):
+        """Foydalanuvchi harakatini loglaydi"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_activity_log (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER, first_name TEXT, username TEXT,
-                    action TEXT, detail TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            cursor.execute(
-                "INSERT INTO user_activity_log (user_id, first_name, username, action, detail) VALUES (?, ?, ?, ?, ?)",
-                (user_id, first_name, username or "", action, detail)
-            )
+            cursor.execute('''
+                INSERT INTO user_activity_log (user_id, first_name, username, action, detail, created_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now', '+5 hours'))
+            ''', (user_id, first_name, username or "", action, detail))
             conn.commit()
         except Exception as e:
             logger.error(f"Log activity error: {e}")
@@ -596,23 +599,22 @@ class Database:
             conn.close()
 
     def get_user_activity(self, user_id: int, limit: int = 20):
+        """Bitta foydalanuvchining so'nggi harakatlarini qaytaradi"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                SELECT action, detail, created_at FROM user_activity_log
-                WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
-            """, (user_id, limit))
-            rows = cursor.fetchall()
-        except:
-            rows = []
+        cursor.execute('''
+            SELECT action, detail, created_at FROM user_activity_log
+            WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
+        ''', (user_id, limit))
+        rows = cursor.fetchall()
         conn.close()
         return rows
 
     def get_all_users_detailed(self):
+        """Barcha foydalanuvchilar — batafsil ma'lumot"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute('''
             SELECT u.user_id, u.first_name, u.username, u.city, u.created_at, u.last_active,
                    COUNT(DISTINCT dt.day_number) as active_days,
                    SUM(CASE WHEN dt.completed=1 THEN 1 ELSE 0 END) as completed_tasks
@@ -620,29 +622,27 @@ class Database:
             LEFT JOIN daily_tasks dt ON u.user_id = dt.user_id
             GROUP BY u.user_id
             ORDER BY u.last_active DESC
-        """)
+        ''')
         rows = cursor.fetchall()
         conn.close()
         return rows
 
     def get_today_active_users(self):
+        """Bugun faol bo'lgan foydalanuvchilar ro'yxati"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        try:
-            cursor.execute("""
-                SELECT DISTINCT u.user_id, u.first_name, u.username, u.city,
-                       COUNT(DISTINCT al.action) as actions_count,
-                       MAX(al.created_at) as last_action
-                FROM users u
-                LEFT JOIN user_activity_log al ON u.user_id = al.user_id
-                    AND DATE(al.created_at) = DATE('now')
-                WHERE DATE(u.last_active) = DATE('now')
-                GROUP BY u.user_id
-                ORDER BY last_action DESC
-            """)
-            rows = cursor.fetchall()
-        except:
-            rows = []
+        cursor.execute('''
+            SELECT DISTINCT u.user_id, u.first_name, u.username, u.city,
+                   COUNT(DISTINCT al.action) as actions_count,
+                   MAX(al.created_at) as last_action
+            FROM users u
+            LEFT JOIN user_activity_log al ON u.user_id = al.user_id
+                AND DATE(al.created_at) = DATE('now')
+            WHERE DATE(u.last_active) = DATE('now')
+            GROUP BY u.user_id
+            ORDER BY last_action DESC
+        ''')
+        rows = cursor.fetchall()
         conn.close()
         return rows
 
@@ -695,7 +695,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     db.add_user(user.id, user.username, user.first_name, user.last_name)
-    db.log_activity(user.id, user.first_name, user.username, "BOT_OCHDI", "/start")
+    db.log_activity(user.id, user.first_name, user.username, "BOT_OCHDI", "/start buyrug'i")
 
     welcome_text = f"""
 🌙 *Assalomu alaykum, {user.first_name}!*
@@ -969,7 +969,7 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 {message}
 
-_Vaqt: {datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M:%S')}_
+_Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
 """
             await context.bot.send_message(ADMIN_ID, admin_text, parse_mode='Markdown')
         except:
@@ -1021,7 +1021,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
 💬 *Xabar:*
 {message}
 
-_Vaqt: {datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M:%S')}_
+_Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
 """
             await context.bot.send_message(
                 ADMIN_ID, admin_text,
@@ -1089,6 +1089,147 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['admin_reply_to'] = None
 
 
+
+
+async def admin_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/users — barcha foydalanuvchilar ro'yxati"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    users = db.get_all_users_detailed()
+    total = len(users)
+
+    if not users:
+        await update.message.reply_text("👥 Foydalanuvchilar yo'q")
+        return
+
+    # Sahifalash — har sahifada 10 ta
+    page = int(context.args[0]) if context.args else 1
+    per_page = 10
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_users = users[start:end]
+    total_pages = (total + per_page - 1) // per_page
+
+    text = f"👥 *Foydalanuvchilar ({total} ta) — {page}/{total_pages} sahifa*\n\n"
+
+    for u in page_users:
+        user_id, first_name, username, city, created_at, last_active, active_days, completed_tasks = u
+        uname = f"@{username}" if username else "username yoq"
+        last = last_active[:16] if last_active else "—"
+        text += f"👤 *{first_name}* ({uname})\n"
+        text += f"   🏙 {city} | 📅 {active_days} kun | ✅ {completed_tasks or 0} vazifa\n"
+        text += f"   🕐 Oxirgi: {last}\n\n"
+
+    if total_pages > 1:
+        text += f"\n➡️ Keyingi sahifa: `/users {page + 1}`" if page < total_pages else ""
+
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+
+async def admin_user_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/user 12345 — bitta foydalanuvchining batafsil ma'lumoti"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if not context.args:
+        await update.message.reply_text("❌ Foydalanish: `/user 12345`", parse_mode='Markdown')
+        return
+
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Noto'g'ri ID")
+        return
+
+    # Foydalanuvchi ma'lumoti
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, first_name, username, city, created_at, last_active FROM users WHERE user_id=?', (target_id,))
+    user_row = cursor.fetchone()
+    conn.close()
+
+    if not user_row:
+        await update.message.reply_text("❌ Foydalanuvchi topilmadi")
+        return
+
+    user_id, first_name, username, city, created_at, last_active = user_row
+    stats = db.get_user_stats(user_id)
+    activities = db.get_user_activity(user_id, 15)
+
+    text = f"""
+👤 *{first_name}*
+🆔 ID: `{user_id}`
+📛 Username: @{username or "yoq"}
+🏙 Shahar: {city}
+📅 Qo'shilgan: {created_at[:16] if created_at else "-"}
+🕐 Oxirgi faollik: {last_active[:16] if last_active else "-"}
+
+📊 *Statistika:*
+✅ Jami vazifalar: {stats['total_completed']}
+🌟 To'liq kunlar: {stats['completed_days']}
+📈 O'rtacha: {stats['avg_progress']}%
+🔥 Streak: {stats['current_streak']} kun
+
+📋 *So'nggi harakatlar:*
+"""
+    for action, detail, created in activities[:10]:
+        time_str = created[11:16] if created else "—"
+        date_str = created[:10] if created else "—"
+        text += f"• `{date_str} {time_str}` — {action}"
+        if detail:
+            text += f": _{detail[:40]}_"
+        text += "\n"
+
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+
+
+
+async def admin_get_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/getdb — bazani fayl sifatida yuboradi"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    try:
+        import os
+        db_path = 'ramadan_final.db'
+        if not os.path.exists(db_path):
+            await update.message.reply_text("❌ Baza topilmadi")
+            return
+        size = os.path.getsize(db_path)
+        await update.message.reply_text(f"📦 Baza yuklanmoqda... ({size // 1024} KB)")
+        with open(db_path, 'rb') as f:
+            await update.message.reply_document(
+                document=f,
+                filename='ramadan_final.db',
+                caption=f"🗄 Ramazon Bot Bazasi\n📅 {datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M')}\n📦 {size // 1024} KB"
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Xatolik: {e}")
+
+
+async def admin_today_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/today — bugun faol bo'lgan foydalanuvchilar"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    users = db.get_today_active_users()
+    ramadan_day = get_ramadan_day()
+
+    if not users:
+        await update.message.reply_text(f"😔 Bugun hech kim kirmadi\n📅 Ramazonning {ramadan_day}-kuni")
+        return
+
+    text = f"📅 *Bugun faol ({len(users)} ta)*\n📅 Ramazonning {ramadan_day}-kuni\n\n"
+
+    for u in users:
+        user_id, first_name, username, city, actions_count, last_action = u
+        uname = f"@{username}" if username else ""
+        last = last_action[11:16] if last_action else "—"
+        text += f"👤 {first_name} {uname} — 🏙{city} | {actions_count} harakat | 🕐{last}\n"
+
+    await update.message.reply_text(text, parse_mode='Markdown')
+
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -1121,101 +1262,6 @@ async def admin_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-
-
-async def admin_users_list(update, context):
-    """/users — barcha foydalanuvchilar"""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    users = db.get_all_users_detailed()
-    total = len(users)
-    if not users:
-        await update.message.reply_text("👥 Foydalanuvchilar yo'q")
-        return
-    page = int(context.args[0]) if context.args else 1
-    per_page = 10
-    start = (page - 1) * per_page
-    page_users = users[start:start + per_page]
-    total_pages = (total + per_page - 1) // per_page
-    lines = [f"<b>👥 Foydalanuvchilar ({total} ta) — {page}/{total_pages}</b>\n"]
-    for u in page_users:
-        uid, fn, un, city, created_at, last_active, active_days, done = u
-        fn = (fn or "").replace("<", "&lt;").replace(">", "&gt;")
-        un = ("@" + un if un else "username yoq").replace("<", "&lt;").replace(">", "&gt;")
-        last = last_active[:16] if last_active else "—"
-        lines.append(f"👤 <b>{fn}</b> ({un})")
-        lines.append(f"   🏙 {city} | 📅 {active_days} kun | ✅ {done or 0} vazifa")
-        lines.append(f"   🕐 {last}\n")
-    if total_pages > 1 and page < total_pages:
-        lines.append(f"\n➡️ Keyingi: /users {page + 1}")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-
-async def admin_user_detail(update, context):
-    """/user 12345"""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if not context.args:
-        await update.message.reply_text("❌ Foydalanish: /user 12345")
-        return
-    try:
-        target_id = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("❌ Noto'g'ri ID")
-        return
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id, first_name, username, city, created_at, last_active FROM users WHERE user_id=?", (target_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row:
-        await update.message.reply_text("❌ Topilmadi")
-        return
-    uid, fn, un, city, created_at, last_active = row
-    stats = db.get_user_stats(uid)
-    activities = db.get_user_activity(uid, 10)
-    fn = (fn or "").replace("<", "&lt;").replace(">", "&gt;")
-    un = (un or "").replace("<", "&lt;").replace(">", "&gt;")
-    text = (
-        f"<b>👤 {fn}</b>\n"
-        f"🆔 ID: <code>{uid}</code>\n"
-        f"📛 @{un or 'yoq'} | 🏙 {city}\n"
-        f"📅 Qo'shilgan: {created_at[:16] if created_at else '-'}\n"
-        f"🕐 Oxirgi: {last_active[:16] if last_active else '-'}\n\n"
-        f"📊 <b>Statistika:</b>\n"
-        f"✅ {stats['total_completed']} vazifa | 🌟 {stats['completed_days']} kun | "
-        f"📈 {stats['avg_progress']}% | 🔥 {stats['current_streak']} streak\n\n"
-        f"📋 <b>Harakatlar:</b>\n"
-    )
-    for action, detail, created in activities:
-        ts = (created or "")[:16]
-        det = (detail or "")[:40].replace("<", "&lt;").replace(">", "&gt;")
-        text += f"• <code>{ts}</code> {action}"
-        if det:
-            text += f": <i>{det}</i>"
-        text += "\n"
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def admin_today_users(update, context):
-    """/today — bugun faol bo'lganlar"""
-    if update.effective_user.id != ADMIN_ID:
-        return
-    users = db.get_today_active_users()
-    ramadan_day = get_ramadan_day()
-    if not users:
-        await update.message.reply_text(f"😔 Bugun hech kim kirmadi\n📅 Ramazonning {ramadan_day}-kuni")
-        return
-    lines = [f"📅 <b>Bugun faol ({len(users)} ta)</b> — Ramazon {ramadan_day}-kun\n"]
-    for u in users:
-        uid, fn, un, city, cnt, last = u
-        fn = (fn or "").replace("<", "&lt;").replace(">", "&gt;")
-        uname = ("@" + un if un else "").replace("<", "&lt;").replace(">", "&gt;")
-        t = last[11:16] if last else "—"
-        lines.append(f"👤 {fn} {uname} — 🏙{city} | {cnt} harakat | 🕐{t}")
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-
 # ================== WEB APP DATA HANDLER ==================
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.web_app_data:
@@ -1223,6 +1269,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         raw_data = update.message.web_app_data.data
 
         logger.info(f"📲 Web App data received from {user.id}: {raw_data}")
+        db.log_activity(user.id, user.first_name, user.username, "WEBAPP_OCHDI", "Web App ishlatdi")
 
         try:
             data = json.loads(raw_data)
@@ -1267,6 +1314,7 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.error(f"Web app data error: {e}")
 
 
+
 # ================== REST API SERVER (Web App uchun) ==================
 
 def verify_telegram_user(init_data: str, bot_token: str):
@@ -1294,7 +1342,7 @@ async def api_get_state(request: web.Request) -> web.Response:
         # user_id olish
         user_id_str = request.rel_url.query.get('user_id', '')
         init_data = request.rel_url.query.get('init_data', '')
-
+        
         user_id = None
         if init_data:
             user_id = verify_telegram_user(init_data, BOT_TOKEN)
@@ -1303,7 +1351,7 @@ async def api_get_state(request: web.Request) -> web.Response:
         # demo_ prefiksli ID lar uchun (brauzerda test qilish)
         if not user_id and user_id_str.startswith('demo_'):
             user_id = user_id_str  # string sifatida saqlaymiz
-
+        
         if not user_id:
             return web.json_response({'ok': False, 'error': 'Unauthorized'}, status=401, headers=headers)
 
@@ -1378,7 +1426,7 @@ async def api_save_state(request: web.Request) -> web.Response:
         ramadan_day = get_ramadan_day()
         if ramadan_day <= 0:
             ramadan_day = 1
-
+        
         day = int(body.get('day', ramadan_day))
         data_type = body.get('type', '')
 
@@ -1457,7 +1505,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
     db.save_user_message(user.id, user.username, user.first_name, text, 'general')
-    db.log_activity(user.id, user.first_name, user.username, 'XABAR', text[:100])
+    db.log_activity(user.id, user.first_name, user.username, "XABAR", text[:100])
 
     if context.user_data.get('awaiting_feedback'):
         await handle_feedback(update, context)
@@ -1667,7 +1715,7 @@ async def send_scheduled_messages(application):
     """Har daqiqa scheduled xabarlarni tekshiradi va yuboradi"""
     while True:
         try:
-            current_time = datetime.now(TASHKENT_TZ).strftime("%H:%M")  # ✅ Toshkent vaqti
+            current_time = datetime.now().strftime("%H:%M")
             scheduled = application.bot_data.get('scheduled_messages', [])
             today = str(date.today())
 
@@ -1695,7 +1743,7 @@ async def send_scheduled_messages(application):
 async def send_time_notifications(application):
     while True:
         try:
-            now = datetime.now(TASHKENT_TZ)  # ✅ Toshkent vaqti (UTC+5)
+            now = datetime.now()
             current_time = now.strftime("%H:%M")
             ramadan_day = get_ramadan_day()
 
@@ -1790,7 +1838,7 @@ def main():
     import os
     application = Application.builder().token(BOT_TOKEN).build()
 
-    if not ADMIN_ID:
+    if not ADMIN_ID :
         logger.warning("⚠️ Admin ID'ni kiriting!")
 
     async def admin_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1941,12 +1989,13 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin_stats))
     application.add_handler(CommandHandler("requests", admin_requests))
+    application.add_handler(CommandHandler("broadcast", broadcast_command))
+    application.add_handler(CommandHandler("schedule", schedule_command))
+    application.add_handler(CommandHandler("getdb", admin_get_db))
+    application.add_handler(CommandHandler("schedule_clear", schedule_clear_command))
     application.add_handler(CommandHandler("users", admin_users_list))
     application.add_handler(CommandHandler("user", admin_user_detail))
     application.add_handler(CommandHandler("today", admin_today_users))
-    application.add_handler(CommandHandler("broadcast", broadcast_command))
-    application.add_handler(CommandHandler("schedule", schedule_command))
-    application.add_handler(CommandHandler("schedule_clear", schedule_clear_command))
     application.add_handler(CallbackQueryHandler(admin_reply_callback, pattern=r"^reply_\d+$"))
 
     # Web App data — eng muhim handler (birinchi)
@@ -1994,29 +2043,31 @@ def main():
         await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("✅ Telegram bot polling boshlandi")
 
-        # Admin buyruqlari
+        # Faqat admin uchun buyruqlar ro'yxatini o'rnatamiz
         try:
             from telegram import BotCommand, BotCommandScopeChat
             admin_commands = [
-                BotCommand("start", "🔄 Qayta ishga tushirish"),
-                BotCommand("admin", "📊 Admin statistika"),
-                BotCommand("users", "👥 Barcha foydalanuvchilar"),
-                BotCommand("today", "📅 Bugun faollar"),
-                BotCommand("user", "🔍 User detail: /user 12345"),
-                BotCommand("requests", "📨 Murojatlar"),
-                BotCommand("broadcast", "📢 Xabar yuborish"),
-                BotCommand("schedule", "⏰ Jadval"),
+                BotCommand("start",          "🔄 Botni qayta ishga tushirish"),
+                BotCommand("admin",          "📊 Admin statistika"),
+                BotCommand("users",          "👥 Barcha foydalanuvchilar"),
+                BotCommand("today",          "📅 Bugun faol bo'lganlar"),
+                BotCommand("user",           "🔍 User detail: /user 12345"),
+                BotCommand("requests",       "📨 Murojatlar ro'yxati"),
+                BotCommand("broadcast",      "📢 Xabar yuborish"),
+                BotCommand("schedule",       "⏰ Jadval: /schedule 08:00 Matn"),
+                BotCommand("getdb", "🗄 Bazani yuklab olish"),
                 BotCommand("schedule_clear", "🗑 Jadvallarni o'chirish"),
             ]
             await application.bot.set_my_commands(
                 admin_commands,
                 scope=BotCommandScopeChat(chat_id=ADMIN_ID)
             )
+            logger.info("✅ Admin buyruqlari o'rnatildi")
         except Exception as e:
-            logger.error(f"Admin commands error: {e}")
+            logger.error(f"Admin commands setup error: {e}")
 
         # Job queue
-        await application.job_queue.start()
+        application.job_queue.start()
 
         # Doim ishlaydi
         import signal
