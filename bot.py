@@ -312,10 +312,10 @@ class Database:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, city, last_active)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, datetime('now', '+5 hours'))
         ''', (user_id, username, first_name, last_name, city))
         cursor.execute('''
-            UPDATE users SET last_active = CURRENT_TIMESTAMP WHERE user_id = ?
+            UPDATE users SET last_active = datetime('now', '+5 hours') WHERE user_id = ?
         ''', (user_id,))
         conn.commit()
         conn.close()
@@ -385,12 +385,12 @@ class Database:
         cursor = conn.cursor()
         try:
             if completed:
-                cursor.execute('''
-                    INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
-                    VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
-                    ON CONFLICT(user_id, day_number, task_id)
-                    DO UPDATE SET completed = 1, completed_at = CURRENT_TIMESTAMP
-                ''', (user_id, day_number, task_id))
+                    cursor.execute('''
+                        INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
+                        VALUES (?, ?, ?, 1, datetime('now', '+5 hours'))
+                        ON CONFLICT(user_id, day_number, task_id)
+                        DO UPDATE SET completed = 1, completed_at = datetime('now', '+5 hours')
+                    ''', (user_id, day_number, task_id))
             else:
                 cursor.execute('''
                     INSERT INTO daily_tasks (user_id, day_number, task_id, completed)
@@ -438,9 +438,9 @@ class Database:
                 if completed:
                     cursor.execute('''
                         INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
-                        VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
-                        ON CONFLICT(user_id, day_number, task_id)
-                        DO UPDATE SET completed = 1, completed_at = CURRENT_TIMESTAMP
+                        VALUES (?, ?, ?, datetime('now', '+5 hours'))
+                        ON CONFLICT(user_id, day_number)
+                        DO UPDATE SET progress_percentage = ?, updated_at = datetime('now', '+5 hours')
                     ''', (user_id, day_number, task_id))
                 else:
                     cursor.execute('''
