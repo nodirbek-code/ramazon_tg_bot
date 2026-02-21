@@ -577,7 +577,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT COUNT(*) FROM users WHERE DATE(last_active) = DATE('now')
+            SELECT COUNT(*) FROM users WHERE DATE(last_active) = DATE(datetime('now', '+5 hours'))
         ''')
         count = cursor.fetchone()[0]
         conn.close()
@@ -637,8 +637,8 @@ class Database:
                    MAX(al.created_at) as last_action
             FROM users u
             LEFT JOIN user_activity_log al ON u.user_id = al.user_id
-                AND DATE(al.created_at) = DATE('now')
-            WHERE DATE(u.last_active) = DATE('now')
+                AND DATE(al.created_at) = DATE(datetime('now', '+5 hours'))
+            WHERE DATE(u.last_active) = DATE(datetime('now', '+5 hours'))
             GROUP BY u.user_id
             ORDER BY last_action DESC
         ''')
@@ -969,7 +969,7 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 {message}
 
-_Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
+_Vaqt: {datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M:%S')}_
 """
             await context.bot.send_message(ADMIN_ID, admin_text, parse_mode='Markdown')
         except:
@@ -1021,7 +1021,7 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
 💬 *Xabar:*
 {message}
 
-_Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
+_Vaqt: {datetime.now(TASHKENT_TZ).strftime('%Y-%m-%d %H:%M:%S')}_
 """
             await context.bot.send_message(
                 ADMIN_ID, admin_text,
@@ -1715,7 +1715,7 @@ async def send_scheduled_messages(application):
     """Har daqiqa scheduled xabarlarni tekshiradi va yuboradi"""
     while True:
         try:
-            current_time = datetime.now().strftime("%H:%M")
+            current_time = datetime.now(TASHKENT_TZ).strftime("%H:%M")  # Toshkent vaqti
             scheduled = application.bot_data.get('scheduled_messages', [])
             today = str(date.today())
 
@@ -1743,7 +1743,7 @@ async def send_scheduled_messages(application):
 async def send_time_notifications(application):
     while True:
         try:
-            now = datetime.now()
+            now = datetime.now(TASHKENT_TZ)  # Toshkent vaqti UTC+5
             current_time = now.strftime("%H:%M")
             ramadan_day = get_ramadan_day()
 
