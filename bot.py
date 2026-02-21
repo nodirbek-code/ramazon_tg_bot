@@ -17,6 +17,9 @@ import hmac
 import hashlib
 from urllib.parse import parse_qs, unquote
 
+import pytz
+TASHKENT_TZ = pytz.timezone('Asia/Tashkent')
+
 # Logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
