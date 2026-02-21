@@ -8,7 +8,9 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
-import sqlite3
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from datetime import datetime, date, timedelta, time
 import json
 import asyncio
@@ -187,233 +189,185 @@ def get_ramadan_date_for_day(day_number):
 
 
 # ================== DATABASE ==================
+
 class Database:
-    def __init__(self, db_file='ramadan_final.db'):
-        self.db_file = db_file
+    def __init__(self):
+        # Railway avtomatik beradigan DATABASE_URL orqali ulanamiz
+        self.db_url = os.getenv("DATABASE_URL")
         self.init_db()
 
     def get_connection(self):
-        return sqlite3.connect(self.db_file)
+        return psycopg2.connect(self.db_url)
 
     def init_db(self):
         conn = self.get_connection()
         cursor = conn.cursor()
 
+        # Users
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 first_name TEXT,
                 last_name TEXT,
                 city TEXT DEFAULT 'Toshkent',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours'),
+                last_active TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours')
             )
         ''')
 
+        # Messages
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS user_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id),
                 username TEXT,
                 first_name TEXT,
                 message TEXT,
                 message_type TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours')
             )
         ''')
 
+        # Admin Requests
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS admin_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id),
                 username TEXT,
                 first_name TEXT,
                 message TEXT,
                 status TEXT DEFAULT 'pending',
                 admin_reply TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                replied_at TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours'),
+                replied_at TIMESTAMP
             )
         ''')
 
+        # Daily Tasks
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS daily_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id),
                 day_number INTEGER,
                 task_id TEXT,
-                completed BOOLEAN DEFAULT 0,
+                completed SMALLINT DEFAULT 0,
                 completed_at TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id),
                 UNIQUE(user_id, day_number, task_id)
             )
         ''')
 
+        # Custom Tasks
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS custom_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id),
                 day_number INTEGER,
                 task_id TEXT,
                 title TEXT,
                 description TEXT,
                 time TEXT,
-                completed BOOLEAN DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
+                completed SMALLINT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours')
             )
         ''')
 
+        # Daily Progress
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS daily_progress (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id),
                 day_number INTEGER,
                 progress_percentage INTEGER,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id),
+                updated_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours'),
                 UNIQUE(user_id, day_number)
             )
         ''')
 
+        # Feedback
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS feedback (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id),
                 username TEXT,
                 first_name TEXT,
                 message TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours')
             )
         ''')
 
+        # Zikr
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS zikr_progress (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT REFERENCES users(user_id),
                 day_number INTEGER,
                 zikr_id TEXT,
                 count INTEGER DEFAULT 0,
-                FOREIGN KEY (user_id) REFERENCES users (user_id),
                 UNIQUE(user_id, day_number, zikr_id)
             )
         ''')
 
-        # Foydalanuvchi harakatlari logi — qachon nima qilgani
+        # Activity Log
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS user_activity_log (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
                 first_name TEXT,
                 username TEXT,
                 action TEXT,
                 detail TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours')
             )
         ''')
 
         conn.commit()
         conn.close()
-        logger.info("✅ Database initialized")
+        logger.info("✅ PostgreSQL Database initialized")
 
     def add_user(self, user_id, username, first_name, last_name, city='Toshkent'):
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT OR IGNORE INTO users (user_id, username, first_name, last_name, city, last_active)
-            VALUES (?, ?, ?, ?, ?, datetime('now', '+5 hours'))
+            INSERT INTO users (user_id, username, first_name, last_name, city, last_active)
+            VALUES (%s, %s, %s, %s, %s, (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours'))
+            ON CONFLICT (user_id) DO UPDATE SET 
+            last_active = (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours'),
+            username = EXCLUDED.username,
+            first_name = EXCLUDED.first_name
         ''', (user_id, username, first_name, last_name, city))
-        cursor.execute('''
-            UPDATE users SET last_active = datetime('now', '+5 hours') WHERE user_id = ?
-        ''', (user_id,))
         conn.commit()
         conn.close()
 
     def set_user_city(self, user_id, city):
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute('UPDATE users SET city = ? WHERE user_id = ?', (city, user_id))
+        cursor.execute('UPDATE users SET city = %s WHERE user_id = %s', (city, user_id))
         conn.commit()
         conn.close()
 
     def get_user_city(self, user_id):
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT city FROM users WHERE user_id = ?', (user_id,))
+        cursor.execute('SELECT city FROM users WHERE user_id = %s', (user_id,))
         result = cursor.fetchone()
         conn.close()
         return result[0] if result else 'Toshkent'
 
-    def save_user_message(self, user_id, username, first_name, message, message_type='general'):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO user_messages (user_id, username, first_name, message, message_type, created_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now', '+5 hours'))
-        ''', (user_id, username, first_name, message, message_type))
-        conn.commit()
-        conn.close()
-
-    def save_admin_request(self, user_id, username, first_name, message):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO admin_requests (user_id, username, first_name, message, created_at)
-            VALUES (?, ?, ?, ?, datetime('now', '+5 hours'))
-        ''', (user_id, username, first_name, message))
-        conn.commit()
-        conn.close()
-
-    def get_pending_requests(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, user_id, username, first_name, message, created_at
-            FROM admin_requests WHERE status = 'pending'
-            ORDER BY created_at DESC LIMIT 10
-        ''')
-        results = cursor.fetchall()
-        conn.close()
-        return results
-
-    def save_feedback(self, user_id, username, first_name, message):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO feedback (user_id, username, first_name, message, created_at)
-            VALUES (?, ?, ?, ?, datetime('now', '+5 hours'))
-        ''', (user_id, username, first_name, message))
-        conn.commit()
-        conn.close()
-    
-
-    # ================== TASK METODLARI ==================
-
-    def save_task_completion(self, user_id: int, day_number: int, task_id: str, completed: bool):
-        """Web App dan kelgan galochkani saqlash"""
+    def save_task_completion(self, user_id, day_number, task_id, completed):
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            if completed:
-                cursor.execute('''
-                    INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
-                    VALUES (?, ?, ?, 1, datetime('now', '+5 hours'))
-                    ON CONFLICT(user_id, day_number, task_id)
-                    DO UPDATE SET completed = 1, completed_at = datetime('now', '+5 hours')
-                ''', (user_id, day_number, task_id))
-            else:
-                cursor.execute('''
-                    INSERT INTO daily_tasks (user_id, day_number, task_id, completed)
-                    VALUES (?, ?, ?, 0)
-                    ON CONFLICT(user_id, day_number, task_id)
-                    DO UPDATE SET completed = 0, completed_at = NULL
-                ''', (user_id, day_number, task_id))
+            val = 1 if completed else 0
+            ts = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '5 hours')" if completed else "NULL"
+            query = f'''
+                INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
+                VALUES (%s, %s, %s, %s, {ts})
+                ON CONFLICT(user_id, day_number, task_id)
+                DO UPDATE SET completed = EXCLUDED.completed, completed_at = EXCLUDED.completed_at
+            '''
+            cursor.execute(query, (user_id, day_number, task_id, val))
             conn.commit()
-            logger.info(f"✅ Task saved: user={user_id}, day={day_number}, task={task_id}, completed={completed}")
             return True
         except Exception as e:
             logger.error(f"Task save error: {e}")
@@ -421,179 +375,34 @@ class Database:
         finally:
             conn.close()
 
-    def get_user_tasks(self, user_id: int, day_number: int) -> dict:
-        """Foydalanuvchining ma'lum kun vazifalarini olish"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT task_id, completed, completed_at
-            FROM daily_tasks
-            WHERE user_id = ? AND day_number = ?
-        ''', (user_id, day_number))
-        rows = cursor.fetchall()
-        conn.close()
-
-        tasks = {}
-        for row in rows:
-            tasks[row[0]] = {
-                "completed": bool(row[1]),
-                "completed_at": row[2]
-            }
-        return tasks
-
-    def save_bulk_tasks(self, user_id: int, day_number: int, tasks: list):
-        """Web App dan kelgan barcha vazifalarni bir vaqtda saqlash"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            for task in tasks:
-                task_id = task.get('id') or task.get('task_id')
-                completed = bool(task.get('completed', False))
-                if completed:
-                    cursor.execute('''
-                        INSERT INTO daily_tasks (user_id, day_number, task_id, completed, completed_at)
-                        VALUES (?, ?, ?, 1, datetime('now', '+5 hours'))
-                        ON CONFLICT(user_id, day_number, task_id)
-                        DO UPDATE SET completed = 1, completed_at = datetime('now', '+5 hours')
-                    ''', (user_id, day_number, task_id))
-                else:
-                    cursor.execute('''
-                        INSERT INTO daily_tasks (user_id, day_number, task_id, completed)
-                        VALUES (?, ?, ?, 0)
-                        ON CONFLICT(user_id, day_number, task_id)
-                        DO UPDATE SET completed = 0, completed_at = NULL
-                    ''', (user_id, day_number, task_id))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Bulk task save error: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def update_daily_progress(self, user_id: int, day_number: int, progress: int):
-        """Kunlik progressni yangilash"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO daily_progress (user_id, day_number, progress_percentage, updated_at)
-                VALUES (?, ?, ?, datetime('now', '+5 hours'))
-                ON CONFLICT(user_id, day_number)
-                DO UPDATE SET progress_percentage = ?, updated_at = datetime('now', '+5 hours')
-            ''', (user_id, day_number, progress, progress))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Progress update error: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def save_zikr_count(self, user_id: int, day_number: int, zikr_id: str, count: int):
-        """Zikr sanini saqlash"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('''
-                INSERT INTO zikr_progress (user_id, day_number, zikr_id, count)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id, day_number, zikr_id)
-                DO UPDATE SET count = ?
-            ''', (user_id, day_number, zikr_id, count, count))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Zikr save error: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def get_zikr_counts(self, user_id: int, day_number: int) -> dict:
-        """Foydalanuvchining zikr sanlarini olish"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT zikr_id, count FROM zikr_progress
-            WHERE user_id = ? AND day_number = ?
-        ''', (user_id, day_number))
-        rows = cursor.fetchall()
-        conn.close()
-        return {row[0]: row[1] for row in rows}
-
     def get_user_stats(self, user_id):
         conn = self.get_connection()
         cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT COUNT(*) FROM daily_tasks WHERE user_id = ? AND completed = 1
-        ''', (user_id,))
+        
+        cursor.execute('SELECT COUNT(*) FROM daily_tasks WHERE user_id = %s AND completed = 1', (user_id,))
         total_completed = cursor.fetchone()[0]
 
-        cursor.execute('''
-            SELECT COUNT(*) FROM daily_progress
-            WHERE user_id = ? AND progress_percentage >= 70
-        ''', (user_id,))
+        cursor.execute('SELECT COUNT(*) FROM daily_progress WHERE user_id = %s AND progress_percentage >= 70', (user_id,))
         completed_days = cursor.fetchone()[0]
 
-        cursor.execute('''
-            SELECT AVG(progress_percentage) FROM daily_progress WHERE user_id = ?
-        ''', (user_id,))
+        cursor.execute('SELECT AVG(progress_percentage) FROM daily_progress WHERE user_id = %s', (user_id,))
         avg_progress = cursor.fetchone()[0] or 0
-
-        cursor.execute('''
-            SELECT day_number, progress_percentage FROM daily_progress
-            WHERE user_id = ? ORDER BY day_number DESC
-        ''', (user_id,))
-        streak = 0
-        for row in cursor.fetchall():
-            if row[1] >= 70:
-                streak += 1
-            else:
-                break
 
         conn.close()
         return {
             'total_completed': total_completed,
             'completed_days': completed_days,
-            'avg_progress': round(avg_progress, 1),
-            'current_streak': streak
+            'avg_progress': round(float(avg_progress), 1),
+            'current_streak': 0 # Streak hisobini keyinroq qo'shish mumkin
         }
 
-    def get_all_users_with_city(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT user_id, city FROM users')
-        results = cursor.fetchall()
-        conn.close()
-        return results
-
-    def get_total_users(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM users')
-        count = cursor.fetchone()[0]
-        conn.close()
-        return count
-
-    def get_active_users_today(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT COUNT(*) FROM users WHERE DATE(last_active) = DATE(datetime('now', '+5 hours'))
-        ''')
-        count = cursor.fetchone()[0]
-        conn.close()
-        return count
-
-    def log_activity(self, user_id: int, first_name: str, username: str, action: str, detail: str = ""):
-        """Foydalanuvchi harakatini loglaydi"""
+    def log_activity(self, user_id, first_name, username, action, detail=""):
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute('''
-                INSERT INTO user_activity_log (user_id, first_name, username, action, detail, created_at)
-                VALUES (?, ?, ?, ?, ?, datetime('now', '+5 hours'))
+                INSERT INTO user_activity_log (user_id, first_name, username, action, detail)
+                VALUES (%s, %s, %s, %s, %s)
             ''', (user_id, first_name, username or "", action, detail))
             conn.commit()
         except Exception as e:
@@ -601,55 +410,7 @@ class Database:
         finally:
             conn.close()
 
-    def get_user_activity(self, user_id: int, limit: int = 20):
-        """Bitta foydalanuvchining so'nggi harakatlarini qaytaradi"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT action, detail, created_at FROM user_activity_log
-            WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
-        ''', (user_id, limit))
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
-
-    def get_all_users_detailed(self):
-        """Barcha foydalanuvchilar — batafsil ma'lumot"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT u.user_id, u.first_name, u.username, u.city, u.created_at, u.last_active,
-                   COUNT(DISTINCT dt.day_number) as active_days,
-                   SUM(CASE WHEN dt.completed=1 THEN 1 ELSE 0 END) as completed_tasks
-            FROM users u
-            LEFT JOIN daily_tasks dt ON u.user_id = dt.user_id
-            GROUP BY u.user_id
-            ORDER BY u.last_active DESC
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
-
-    def get_today_active_users(self):
-        """Bugun faol bo'lgan foydalanuvchilar ro'yxati"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT DISTINCT u.user_id, u.first_name, u.username, u.city,
-                   COUNT(DISTINCT al.action) as actions_count,
-                   MAX(al.created_at) as last_action
-            FROM users u
-            LEFT JOIN user_activity_log al ON u.user_id = al.user_id
-                AND DATE(al.created_at) = DATE(datetime('now', '+5 hours'))
-            WHERE DATE(u.last_active) = DATE(datetime('now', '+5 hours'))
-            GROUP BY u.user_id
-            ORDER BY last_action DESC
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
-
-
+# Botni ishga tushirish
 db = Database()
 
 
