@@ -2016,7 +2016,7 @@ def main():
             logger.error(f"Admin commands error: {e}")
 
         # Job queue
-        application.job_queue.start()
+        await application.job_queue.start()
 
         # Doim ishlaydi
         import signal
